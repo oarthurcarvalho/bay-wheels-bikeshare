@@ -22,4 +22,5 @@ output/
 *.csv
 *.parquet
 *.txt
+data/
 
