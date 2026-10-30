@@ -1,6 +1,12 @@
+import os
+
+import boto3
+
+
 from gbfs import buscar_feed, montar_linha
 
 FEEDS_HORARIOS = ["station_information", "system_regions"]
+cliente = boto3.client("s3")
 
 
 def chave_bruto(feed, agora):
@@ -31,3 +37,17 @@ def coletar_status(agora):
                 print(f"Falha ao coletar {feed}: {e!r}")
 
     return arquivos
+
+def gravar_s3(arquivos):
+
+    
+    bucket = os.environ["BUCKET"]
+    
+    for chave, conteudo in arquivos.items():
+        cliente.put_object(
+            Bucket=bucket,
+            Key=chave,
+            Body=conteudo,
+            ContentType="application/gzip",
+        )
+    
