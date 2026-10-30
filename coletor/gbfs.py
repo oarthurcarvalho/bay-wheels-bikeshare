@@ -16,7 +16,7 @@ def buscar_feed(feed):
     for tentativa in range(2):
 
         try:
-            with urlopen(config_request, timeout=20) as response:
+            with urlopen(config_request, timeout=8) as response:
                 content = json.loads(response.read())
                 return content
 
