@@ -1,7 +1,7 @@
+import datetime
 import os
 
 import boto3
-
 
 from gbfs import buscar_feed, montar_linha
 
@@ -38,11 +38,11 @@ def coletar_status(agora):
 
     return arquivos
 
+
 def gravar_s3(arquivos):
 
-    
     bucket = os.environ["BUCKET"]
-    
+
     for chave, conteudo in arquivos.items():
         cliente.put_object(
             Bucket=bucket,
@@ -50,4 +50,15 @@ def gravar_s3(arquivos):
             Body=conteudo,
             ContentType="application/gzip",
         )
-    
+
+
+def lambda_handler(event, context):
+
+    agora = datetime.datetime.now(datetime.timezone.utc)
+    arquivos = coletar_status(agora)
+    gravar_s3(arquivos)
+
+    return {
+        "coletado_em": agora.isoformat(),
+        "arquivos": list(arquivos),
+    }

@@ -34,6 +34,22 @@ def falhar_em(monkeypatch, feed_com_erro):
     monkeypatch.setattr(status, "buscar_feed", buscar_feed_falso)
 
 
+@pytest.fixture
+def s3_falso(monkeypatch):
+    """
+    Troca o cliente S3 por um falso e devolve a lista de put_object recebidos.
+    """
+    chamadas = []
+
+    class ClienteFalso:
+        def put_object(self, **kwargs):
+            chamadas.append(kwargs)
+
+    monkeypatch.setattr(status, "cliente", ClienteFalso())
+    monkeypatch.setenv("BUCKET", "bucket-teste")
+    return chamadas
+
+
 def test_chave_bruto():
     chave = status.chave_bruto("station_status", MEIA_NOITE_E_3)
     assert chave == "raw/station_status/date=2026-10-29/000300.jsonl.gz"
@@ -97,3 +113,43 @@ def test_falha_no_status_sobe(monkeypatch):
 
     with pytest.raises(TimeoutError):
         status.coletar_status(MEIA_NOITE_E_3)
+
+
+def test_gravar_s3_envia_cada_arquivo(s3_falso):
+    arquivos = {
+        "raw/station_status/date=2026-10-29/000300.jsonl.gz": b"status",
+        "raw/system_regions/date=2026-10-29/000300.jsonl.gz": b"regions",
+    }
+
+    status.gravar_s3(arquivos)
+
+    assert s3_falso == [
+        {
+            "Bucket": "bucket-teste",
+            "Key": "raw/station_status/date=2026-10-29/000300.jsonl.gz",
+            "Body": b"status",
+            "ContentType": "application/gzip",
+        },
+        {
+            "Bucket": "bucket-teste",
+            "Key": "raw/system_regions/date=2026-10-29/000300.jsonl.gz",
+            "Body": b"regions",
+            "ContentType": "application/gzip",
+        },
+    ]
+
+
+def test_gravar_s3_sem_bucket_falha(s3_falso, monkeypatch):
+    monkeypatch.delenv("BUCKET")
+
+    with pytest.raises(KeyError):
+        status.gravar_s3({"raw/station_status/date=2026-10-29/000300.jsonl.gz": b"status"})
+
+    assert s3_falso == []
+
+
+def test_lambda_handler_grava_o_que_coletou(feeds_pedidos, s3_falso):
+    resumo = status.lambda_handler({}, None)
+
+    assert resumo["arquivos"] == [chamada["Key"] for chamada in s3_falso]
+    assert "raw/station_status/" in resumo["arquivos"][0]

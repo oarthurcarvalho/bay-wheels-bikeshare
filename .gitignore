@@ -18,9 +18,10 @@ env/
 output/
 *.ipynb_checkpoint/
 
+.python-version 
+
 # Data files
 *.csv
 *.parquet
-*.txt
 data/
 
