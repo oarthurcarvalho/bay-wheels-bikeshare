@@ -24,4 +24,5 @@ output/
 *.csv
 *.parquet
 data/
+build/
 
