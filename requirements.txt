@@ -1,2 +1,2 @@
 pytest
-boto3
+boto3[crt]
