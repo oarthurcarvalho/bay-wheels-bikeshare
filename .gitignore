@@ -17,6 +17,7 @@ env/
 *.nbconvert.ipynb
 output/
 *.ipynb_checkpoint/
+.vscode/
 
 .python-version 
 
