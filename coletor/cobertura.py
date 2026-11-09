@@ -8,6 +8,8 @@ import sys
 import boto3
 
 INTERVALO = datetime.timedelta(minutes=5)
+# Estação que não manda sinal há mais que isso está com o dado congelado
+LIMITE_SEM_COMUNICACAO = datetime.timedelta(hours=1)
 # Primeira execução do Scheduler; o que veio antes (o Test manual de 31/10 01:01) não conta
 COLETA_LIGADA_EM = datetime.datetime(2026, 10, 31, 21, 35, tzinfo=datetime.timezone.utc)
 cliente = boto3.client("s3")
@@ -29,11 +31,28 @@ def listar_coletas(data):
     return sorted(coletas, key=lambda coleta: coleta["horario"])
 
 
-def ler_last_updated(chave):
+def ler_resposta(chave):
 
     objeto = cliente.get_object(Bucket=os.environ["BUCKET"], Key=chave)
     linha = json.loads(gzip.decompress(objeto["Body"].read()))
-    return linha["resposta"]["last_updated"]
+    return linha["resposta"]
+
+
+def ler_last_updated(chave):
+
+    return ler_resposta(chave)["last_updated"]
+
+
+def estacoes_sem_comunicacao(resposta):
+
+    # Compara com o relógio do próprio feed, não com o da Lambda
+    agora = resposta["last_updated"]
+    limite = LIMITE_SEM_COMUNICACAO.total_seconds()
+    return sorted(
+        estacao["station_id"]
+        for estacao in resposta["data"]["stations"]
+        if agora - estacao.get("last_reported", 0) > limite
+    )
 
 
 def calcular_cobertura(coletas, inicio, fim):
@@ -80,7 +99,26 @@ def cobertura_dia(data, agora=None):
     return {"data": data.isoformat(), **calcular_cobertura(coletas, inicio, fim)}
 
 
+def relatorio_cobertura(data, agora=None):
+
+    relatorio = cobertura_dia(data, agora)
+
+    # Retrato das estações na última coleta do dia
+    coletas = listar_coletas(data)
+    if coletas:
+        resposta = ler_resposta(coletas[-1]["chave"])
+        sem_comunicacao = estacoes_sem_comunicacao(resposta)
+        relatorio["estacoes"] = len(resposta["data"]["stations"])
+    else:
+        sem_comunicacao = []
+        relatorio["estacoes"] = 0
+
+    relatorio["sem_comunicacao_1h"] = len(sem_comunicacao)
+    relatorio["estacoes_sem_comunicacao"] = sem_comunicacao
+    return relatorio
+
+
 if __name__ == "__main__":
 
     data = datetime.date.fromisoformat(sys.argv[1])
-    print(json.dumps(cobertura_dia(data), indent=2))
+    print(json.dumps(relatorio_cobertura(data), indent=2))

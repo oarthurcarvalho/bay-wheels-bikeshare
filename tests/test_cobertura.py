@@ -190,3 +190,31 @@ def test_cobertura_dia_antes_de_ligar_a_coleta(usar_s3):
 
     with pytest.raises(ValueError):
         cobertura.cobertura_dia(date(2026, 10, 30), agora=MEIA_NOITE)
+
+
+def test_estacoes_sem_comunicacao_usa_o_relogio_do_feed():
+    resposta = {
+        "last_updated": 10_000,
+        "data": {
+            "stations": [
+                {"station_id": "b", "last_reported": 10_000 - 7_200},
+                {"station_id": "em-dia", "last_reported": 9_990},
+                {"station_id": "exato-1h", "last_reported": 10_000 - 3_600},
+                {"station_id": "a", "last_reported": 0},
+                {"station_id": "sem-campo"},
+            ]
+        },
+    }
+
+    # Ordenadas; 1 h cravada ainda não conta
+    assert cobertura.estacoes_sem_comunicacao(resposta) == ["a", "b", "sem-campo"]
+
+
+def test_relatorio_dia_sem_coletas_tem_zero_estacoes(usar_s3):
+    usar_s3({})
+
+    relatorio = cobertura.relatorio_cobertura(date(2026, 11, 1), agora=FIM_DO_DIA)
+
+    assert relatorio["cobertura"] == 0
+    assert relatorio["estacoes"] == 0
+    assert relatorio["estacoes_sem_comunicacao"] == []

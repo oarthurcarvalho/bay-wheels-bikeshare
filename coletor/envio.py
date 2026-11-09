@@ -11,6 +11,8 @@ from urllib.request import Request, urlopen
 import boto3
 from botocore.exceptions import ClientError
 
+import cobertura
+
 # Primeiro dia com coleta do Scheduler; antes disso não há o que enviar
 PRIMEIRO_DIA = datetime.date(2026, 10, 31)
 CHAVE_MANIFESTO_DIAS = "manifestos/envio.json"
@@ -23,7 +25,9 @@ ARQUIVOS_DO_DIA = {
     "station_information": "info.jsonl.gz",
     "system_regions": "regions.jsonl.gz",
 }
-MAX_DIAS = 10
+# Na rotina é 1 dia; o limite só pesa quando há atraso acumulado (cada dia leva ~20 s)
+MAX_DIAS = 5
+COBERTURA_MINIMA = 0.95
 MAX_MESES = 10
 # Nível 6: no zip de set/26, 4,3 s e 22 MB; o nível 9 leva 11,5 s para ganhar 4%
 NIVEL_GZIP = 6
@@ -33,6 +37,7 @@ PASTA_TMP = pathlib.Path(tempfile.gettempdir())
 
 cliente = boto3.client("s3")
 ssm = boto3.client("ssm", region_name="us-east-1")
+sns = boto3.client("sns", region_name="us-east-1")
 
 
 def juntar_dia(feed, data):
@@ -89,7 +94,8 @@ def dias_pendentes(manifesto, hoje):
     dia = PRIMEIRO_DIA
     # "<" e não "<=": o dia de hoje ainda não fechou
     while dia < hoje:
-        if dia.isoformat() not in manifesto:
+        # O dia só está completo com o relatório; dias enviados antes dele voltam à fila
+        if "cobertura" not in manifesto.get(dia.isoformat(), {}):
             pendentes.append(dia)
         dia += datetime.timedelta(days=1)
 
@@ -143,6 +149,29 @@ def enviar_dia(data, host, token):
     return linhas_por_feed
 
 
+def publicar_relatorio(data, host, token):
+
+    relatorio = cobertura.relatorio_cobertura(data)
+    corpo = json.dumps(relatorio, indent=2).encode("utf-8")
+    chave = f"relatorios/cobertura/date={data.isoformat()}.json"
+
+    # S3 é a fonte da verdade; o Volume recebe a cópia para o Databricks
+    cliente.put_object(
+        Bucket=os.environ["BUCKET"], Key=chave, Body=corpo, ContentType="application/json"
+    )
+    enviar_volume(chave, corpo, host, token)
+
+    if relatorio["cobertura"] < COBERTURA_MINIMA:
+        # Assunto do SNS: só ASCII e menos de 100 caracteres
+        sns.publish(
+            TopicArn=os.environ["TOPICO_ALERTAS"],
+            Subject=f"Bay Wheels: cobertura de {data} em {relatorio['cobertura']:.1%}",
+            Message=corpo.decode("utf-8"),
+        )
+
+    return relatorio
+
+
 def enviar_dias(host, token):
 
     manifesto = ler_manifesto(CHAVE_MANIFESTO_DIAS)
@@ -152,15 +181,17 @@ def enviar_dias(host, token):
     for data in fila[:MAX_DIAS]:
         try:
             linhas = enviar_dia(data, host, token)
+            relatorio = publicar_relatorio(data, host, token)
         except Exception as e:
             # Um dia ruim não segura os outros: fica fora do manifesto e volta amanhã
             print(f"Falha ao enviar {data}: {e!r}")
             falhas.append(data.isoformat())
             continue
 
-        # Só entra no manifesto depois dos 3 envios OK
+        # Só entra no manifesto depois dos 3 envios e do relatório OK
         manifesto[data.isoformat()] = {
             "linhas": linhas,
+            "cobertura": relatorio["cobertura"],
             "enviado_em": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         }
         salvar_manifesto(manifesto, CHAVE_MANIFESTO_DIAS)

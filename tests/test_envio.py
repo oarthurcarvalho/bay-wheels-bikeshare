@@ -26,7 +26,11 @@ class S3Falso:
         return self
 
     def paginate(self, Bucket, Prefix):
-        chaves = [{"Key": chave} for chave in self.objetos if chave.startswith(Prefix)]
+        chaves = [
+            {"Key": chave, "Size": len(self.objetos[chave])}
+            for chave in self.objetos
+            if chave.startswith(Prefix)
+        ]
         return [{"Contents": chaves[:1]}, {"Contents": chaves[1:]}, {"KeyCount": 0}]
 
     def get_object(self, Bucket, Key):
@@ -121,7 +125,7 @@ def test_enviar_volume_faz_put_com_token(monkeypatch):
 
 
 def manifesto_com(*dias):
-    return {dia: {"linhas": {}} for dia in dias}
+    return {dia: {"linhas": {}, "cobertura": 1.0} for dia in dias}
 
 
 def test_dias_pendentes_sem_manifesto_e_tudo_ate_ontem():
@@ -139,6 +143,13 @@ def test_dias_pendentes_so_o_que_falta():
 def test_dias_pendentes_pega_buraco_no_meio():
     # 01/11 falhou e 02/11 foi: o 01/11 continua pendente
     manifesto = manifesto_com("2026-10-31", "2026-11-02")
+
+    assert envio.dias_pendentes(manifesto, date(2026, 11, 3)) == [date(2026, 11, 1)]
+
+
+def test_dias_pendentes_dia_sem_relatorio_volta_para_a_fila():
+    # Enviado na sexta, antes de existir o relatório de cobertura
+    manifesto = {**manifesto_com("2026-10-31", "2026-11-02"), "2026-11-01": {"linhas": {}}}
 
     assert envio.dias_pendentes(manifesto, date(2026, 11, 3)) == [date(2026, 11, 1)]
 
@@ -184,14 +195,41 @@ class SsmFalso:
         return {"Parameter": {"Value": valor[Name]}}
 
 
-def coletas_do_dia(dia, feeds=tuple(envio.ARQUIVOS_DO_DIA)):
+ESTACOES = [
+    {"station_id": "ok", "last_reported": -60},
+    {"station_id": "muda-ha-2h", "last_reported": -7200},
+]
+
+
+def coletas_do_dia(dia, feeds=tuple(envio.ARQUIVOS_DO_DIA), horarios=("000036", "010036")):
     # 2 arquivos por feed bastam para provar que o dia foi juntado
     objetos = {}
     for feed in feeds:
-        for hhmmss in ("000036", "010036"):
-            agora = datetime.fromisoformat(f"{dia}T{hhmmss[:2]}:00:36+00:00")
-            objetos[f"raw/{feed}/date={dia}/{hhmmss}.jsonl.gz"] = montar_linha(feed, {}, agora)
+        for hhmmss in horarios:
+            agora = datetime.fromisoformat(f"{dia}T{hhmmss[:2]}:{hhmmss[2:4]}:36+00:00")
+            ts = int(agora.timestamp())
+            estacoes = [{**e, "last_reported": ts + e["last_reported"]} for e in ESTACOES]
+            resposta = {"last_updated": ts, "data": {"stations": estacoes}}
+            objetos[f"raw/{feed}/date={dia}/{hhmmss}.jsonl.gz"] = montar_linha(feed, resposta, agora)
     return objetos
+
+
+def dia_completo(dia):
+    # 288 coletas de status (100%) e 2 de cada feed horário
+    horarios = [f"{h:02d}{m:02d}36" for h in range(24) for m in range(0, 60, 5)]
+    return {
+        **coletas_do_dia(dia, feeds=("station_status",), horarios=horarios),
+        **coletas_do_dia(dia, feeds=("station_information", "system_regions")),
+    }
+
+
+class SnsFalso:
+    def __init__(self):
+        self.publicados = []
+
+    def publish(self, TopicArn, Subject, Message):
+        assert Subject.isascii() and len(Subject) < 100
+        self.publicados.append({"topico": TopicArn, "assunto": Subject, "mensagem": json.loads(Message)})
 
 
 @pytest.fixture
@@ -202,7 +240,9 @@ def lambda_falsa(monkeypatch, tmp_path):
     caminho no Volume → bytes recebidos no PUT.
     """
     monkeypatch.setenv("BUCKET", "bucket-teste")
+    monkeypatch.setenv("TOPICO_ALERTAS", "arn:topico")
     monkeypatch.setattr(envio, "ssm", SsmFalso())
+    monkeypatch.setattr(envio, "sns", SnsFalso())
     monkeypatch.setattr(envio, "hoje_utc", lambda: date(2026, 11, 3))
     monkeypatch.setattr(envio, "PASTA_TMP", tmp_path)
 
@@ -217,7 +257,9 @@ def lambda_falsa(monkeypatch, tmp_path):
 
     def instalar(objetos):
         bucket = BucketFalso(objetos)
+        # O relatório usa o cliente do módulo cobertura: os dois olham o mesmo bucket
         monkeypatch.setattr(envio, "cliente", bucket)
+        monkeypatch.setattr(envio.cobertura, "cliente", bucket)
         return bucket
 
     return instalar, enviados
@@ -235,7 +277,7 @@ def test_lambda_envia_dias_pendentes_e_segunda_execucao_nao_envia_nada(lambda_fa
     segunda = envio.lambda_handler({}, None)
 
     assert primeira["dias"]["enviados"] == ["2026-10-31", "2026-11-01", "2026-11-02"]
-    assert len(enviados) == 9  # 3 dias × 3 arquivos
+    assert len(enviados) == 12  # 3 dias × (3 arquivos + relatório)
     assert "station_information/date=2026-11-01/info.jsonl.gz" in enviados
     assert segunda["dias"] == {"pendentes": 0, "enviados": [], "falhas": [], "restantes": 0}
     # Um manifesto salvo por dia, e o último tem as linhas de cada feed
@@ -365,3 +407,38 @@ def test_lambda_envia_no_maximo_max_meses(lambda_falsa, monkeypatch):
 
     assert resultado["viagens"]["enviados"] == ["202201", "202202"]
     assert resultado["viagens"]["restantes"] == 1
+
+
+# --- Domingo 8: relatório de cobertura no S3, no Volume e no SNS ---
+
+
+def test_relatorio_vai_para_s3_e_volume_e_entra_no_manifesto(lambda_falsa):
+    instalar, enviados = lambda_falsa
+    bucket = instalar(dia_completo("2026-11-02"))
+    envio.salvar_manifesto(manifesto_com("2026-10-31", "2026-11-01"), envio.CHAVE_MANIFESTO_DIAS)
+
+    envio.lambda_handler({}, None)
+
+    chave = "relatorios/cobertura/date=2026-11-02.json"
+    relatorio = json.loads(bucket.objetos[chave])
+    assert json.loads(enviados[chave]) == relatorio
+    assert relatorio["encontradas"] == 288
+    assert relatorio["cobertura"] == 1.0
+    assert relatorio["estacoes"] == 2
+    assert relatorio["estacoes_sem_comunicacao"] == ["muda-ha-2h"]
+    assert bucket.salvos[envio.CHAVE_MANIFESTO_DIAS][-1]["2026-11-02"]["cobertura"] == 1.0
+    # 100% de cobertura: nada no SNS
+    assert envio.sns.publicados == []
+
+
+def test_cobertura_baixa_publica_no_sns(lambda_falsa):
+    instalar, _ = lambda_falsa
+    instalar(coletas_do_dia("2026-11-02"))  # só 2 coletas de status no dia
+    envio.salvar_manifesto(manifesto_com("2026-10-31", "2026-11-01"), envio.CHAVE_MANIFESTO_DIAS)
+
+    envio.lambda_handler({}, None)
+
+    [alerta] = envio.sns.publicados
+    assert alerta["topico"] == "arn:topico"
+    assert "2026-11-02" in alerta["assunto"]
+    assert alerta["mensagem"]["encontradas"] == 2
