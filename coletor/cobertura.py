@@ -10,14 +10,18 @@ import boto3
 INTERVALO = datetime.timedelta(minutes=5)
 # Estação que não manda sinal há mais que isso está com o dado congelado
 LIMITE_SEM_COMUNICACAO = datetime.timedelta(hours=1)
+# O GBFS da Bay Wheels não tem is_virtual_station: o que marca a estação virtual é o nome
+PREFIXO_VIRTUAL = "VIRTUAL STATION"
+# 2: sem_comunicacao_1h passou a contar só estações físicas (antes de 10/11 contava as virtuais)
+VERSAO_RELATORIO = 2
 # Primeira execução do Scheduler; o que veio antes (o Test manual de 31/10 01:01) não conta
 COLETA_LIGADA_EM = datetime.datetime(2026, 10, 31, 21, 35, tzinfo=datetime.timezone.utc)
 cliente = boto3.client("s3")
 
 
-def listar_coletas(data):
+def listar_coletas(data, feed="station_status"):
 
-    prefixo = f"raw/station_status/date={data.isoformat()}/"
+    prefixo = f"raw/{feed}/date={data.isoformat()}/"
     paginador = cliente.get_paginator("list_objects_v2")
 
     coletas = []
@@ -99,22 +103,43 @@ def cobertura_dia(data, agora=None):
     return {"data": data.isoformat(), **calcular_cobertura(coletas, inicio, fim)}
 
 
+def estacoes_virtuais(data):
+
+    # Último cadastro do dia; sem cadastro, ninguém é marcado como virtual
+    retratos = listar_coletas(data, "station_information")
+    if not retratos:
+        return set()
+
+    cadastro = ler_resposta(retratos[-1]["chave"])["data"]["stations"]
+    return {
+        estacao["station_id"]
+        for estacao in cadastro
+        if estacao.get("name", "").startswith(PREFIXO_VIRTUAL)
+    }
+
+
 def relatorio_cobertura(data, agora=None):
 
-    relatorio = cobertura_dia(data, agora)
+    relatorio = {"versao": VERSAO_RELATORIO, **cobertura_dia(data, agora)}
 
     # Retrato das estações na última coleta do dia
     coletas = listar_coletas(data)
     if coletas:
         resposta = ler_resposta(coletas[-1]["chave"])
-        sem_comunicacao = estacoes_sem_comunicacao(resposta)
+        mudas = estacoes_sem_comunicacao(resposta)
         relatorio["estacoes"] = len(resposta["data"]["stations"])
     else:
-        sem_comunicacao = []
+        mudas = []
         relatorio["estacoes"] = 0
 
-    relatorio["sem_comunicacao_1h"] = len(sem_comunicacao)
-    relatorio["estacoes_sem_comunicacao"] = sem_comunicacao
+    # Virtual não tem equipamento: o last_reported fica parado desde a criação, e isso
+    # não é falha. Só as físicas mudas indicam estoque congelado
+    virtuais = estacoes_virtuais(data)
+    fisicas = [station_id for station_id in mudas if station_id not in virtuais]
+
+    relatorio["virtuais_sem_comunicacao"] = len(mudas) - len(fisicas)
+    relatorio["sem_comunicacao_1h"] = len(fisicas)
+    relatorio["estacoes_sem_comunicacao"] = fisicas
     return relatorio
 
 

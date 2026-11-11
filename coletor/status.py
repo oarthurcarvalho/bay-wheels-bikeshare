@@ -1,5 +1,8 @@
 import datetime
+import gzip
+import json
 import os
+import time
 
 import boto3
 
@@ -52,11 +55,31 @@ def gravar_s3(arquivos):
         )
 
 
+def registrar_execucao(arquivos, inicio):
+
+    # Uma linha JSON por execução: o CloudWatch Logs Insights filtra e soma por campo
+    chave_status = next(chave for chave in arquivos if chave.startswith("raw/station_status/"))
+    linha_status = json.loads(gzip.decompress(arquivos[chave_status]))
+
+    registro = {
+        "evento": "coleta",
+        "feeds": sorted(chave.split("/")[1] for chave in arquivos),
+        "arquivos": len(arquivos),
+        "bytes": sum(len(conteudo) for conteudo in arquivos.values()),
+        "ms": round((time.perf_counter() - inicio) * 1000),
+        "last_updated": linha_status["resposta"].get("last_updated"),
+    }
+    print(json.dumps(registro))
+    return registro
+
+
 def lambda_handler(event, context):
 
+    inicio = time.perf_counter()
     agora = datetime.datetime.now(datetime.timezone.utc)
     arquivos = coletar_status(agora)
     gravar_s3(arquivos)
+    registrar_execucao(arquivos, inicio)
 
     return {
         "coletado_em": agora.isoformat(),

@@ -218,3 +218,44 @@ def test_relatorio_dia_sem_coletas_tem_zero_estacoes(usar_s3):
     assert relatorio["cobertura"] == 0
     assert relatorio["estacoes"] == 0
     assert relatorio["estacoes_sem_comunicacao"] == []
+
+
+def test_relatorio_separa_virtuais_das_fisicas(monkeypatch):
+    respostas = {
+        "station_status": {
+            "last_updated": 10_000,
+            "data": {
+                "stations": [
+                    {"station_id": "pier-27", "last_reported": 0},
+                    {"station_id": "market-st", "last_reported": 0},
+                    {"station_id": "mission", "last_reported": 9_990},
+                ]
+            },
+        },
+        "station_information": {
+            "data": {
+                "stations": [
+                    {"station_id": "pier-27", "name": "VIRTUAL STATION: Pier 27"},
+                    {"station_id": "market-st", "name": "Market St at 4th St"},
+                    {"station_id": "mission", "name": "Mission St at 16th St"},
+                ]
+            }
+        },
+    }
+    monkeypatch.setattr(cobertura, "cobertura_dia", lambda data, agora=None: {"cobertura": 1.0})
+    monkeypatch.setattr(cobertura, "listar_coletas", lambda data, feed="station_status": [{"chave": feed}])
+    monkeypatch.setattr(cobertura, "ler_resposta", lambda chave: respostas[chave])
+
+    relatorio = cobertura.relatorio_cobertura(date(2026, 11, 7))
+
+    assert relatorio["versao"] == 2
+    assert relatorio["estacoes"] == 3
+    assert relatorio["virtuais_sem_comunicacao"] == 1
+    assert relatorio["sem_comunicacao_1h"] == 1
+    assert relatorio["estacoes_sem_comunicacao"] == ["market-st"]
+
+
+def test_sem_cadastro_no_dia_ninguem_e_virtual(usar_s3):
+    usar_s3({})
+
+    assert cobertura.estacoes_virtuais(date(2026, 11, 1)) == set()

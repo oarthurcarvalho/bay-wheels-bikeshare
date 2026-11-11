@@ -1,5 +1,6 @@
 import datetime
 import gzip
+import io
 import json
 import os
 import pathlib
@@ -62,7 +63,11 @@ def juntar_dia(feed, data):
 
     juntado = b"".join(partes)
 
-    linhas = gzip.decompress(juntado).count(b"\n")
+    # Contar em blocos: descomprimir o dia inteiro de uma vez quase estourou 256 MB na sexta
+    linhas = 0
+    with gzip.GzipFile(fileobj=io.BytesIO(juntado)) as arquivo:
+        for bloco in iter(lambda: arquivo.read(BLOCO), b""):
+            linhas += bloco.count(b"\n")
     if linhas != len(chaves):
         raise ValueError(f"{len(chaves)} arquivos, mas {linhas} linhas")
 
