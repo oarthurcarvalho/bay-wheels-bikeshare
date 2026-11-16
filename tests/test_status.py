@@ -158,7 +158,12 @@ def test_lambda_handler_grava_o_que_coletou(feeds_pedidos, s3_falso):
 def test_registrar_execucao_e_uma_linha_json(capsys):
     arquivos = {
         "raw/station_status/date=2026-10-29/000300.jsonl.gz": status.montar_linha(
-            "station_status", {"last_updated": 1_793_000_000, "data": {"stations": []}}, MEIA_NOITE_E_3
+            "station_status",
+            {
+                "last_updated": 1_793_000_000,
+                "data": {"stations": [{"station_id": "a"}, {"station_id": "b"}]},
+            },
+            MEIA_NOITE_E_3,
         ),
         "raw/system_regions/date=2026-10-29/000300.jsonl.gz": b"x" * 10,
     }
@@ -172,4 +177,5 @@ def test_registrar_execucao_e_uma_linha_json(capsys):
     assert registro["feeds"] == ["station_status", "system_regions"]
     assert registro["bytes"] == sum(len(conteudo) for conteudo in arquivos.values())
     assert registro["last_updated"] == 1_793_000_000
+    assert registro["estacoes"] == 2
     assert registro["ms"] >= 0

@@ -60,6 +60,7 @@ def registrar_execucao(arquivos, inicio):
     # Uma linha JSON por execução: o CloudWatch Logs Insights filtra e soma por campo
     chave_status = next(chave for chave in arquivos if chave.startswith("raw/station_status/"))
     linha_status = json.loads(gzip.decompress(arquivos[chave_status]))
+    resposta = linha_status["resposta"]
 
     registro = {
         "evento": "coleta",
@@ -67,7 +68,9 @@ def registrar_execucao(arquivos, inicio):
         "arquivos": len(arquivos),
         "bytes": sum(len(conteudo) for conteudo in arquivos.values()),
         "ms": round((time.perf_counter() - inicio) * 1000),
-        "last_updated": linha_status["resposta"].get("last_updated"),
+        "last_updated": resposta.get("last_updated"),
+        # Um 200 com a lista vazia grava arquivo normal: só este número denuncia
+        "estacoes": len(resposta.get("data", {}).get("stations", [])),
     }
     print(json.dumps(registro))
     return registro
