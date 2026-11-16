@@ -190,7 +190,7 @@ data "aws_iam_policy_document" "envio" {
   statement {
     sid       = "Alertas"
     actions   = ["sns:Publish"]
-    resources = ["arn:aws:sns:${local.regiao}:${local.conta}:baywheels-alertas"]
+    resources = [local.topico_alertas]
   }
 }
 

@@ -7,6 +7,11 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 6.0"
     }
+    # Monta o .zip de cada Lambda a partir de coletor/
+    archive = {
+      source  = "hashicorp/archive"
+      version = "~> 2.0"
+    }
   }
 
   # O bucket do state foi criado à mão: é o único recurso fora do código
