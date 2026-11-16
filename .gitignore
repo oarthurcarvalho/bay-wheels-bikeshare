@@ -27,3 +27,9 @@ output/
 data/
 build/
 
+
+# Terraform: o state mora no S3; o .terraform.lock.hcl vai para o git
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
