@@ -2,8 +2,8 @@
 # O zip sai de coletor/ a cada plan: mudou um .py, o apply publica; não mudou, nada acontece.
 
 locals {
-  # Vira o aws_sns_topic.alertas.arn quando o SNS entrar no Terraform (agenda e alertas)
-  topico_alertas = "arn:aws:sns:${local.regiao}:${local.conta}:baywheels-alertas"
+  # Usado na política do envio (iam.tf) e na variável de ambiente da Lambda
+  topico_alertas = aws_sns_topic.alertas.arn
 
   funcoes = {
     # A cada 5 min: retrato do GBFS
