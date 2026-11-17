@@ -1,2 +1,4 @@
 pytest
 boto3[crt]
+# Versão fixa: o CI e o seu PC apontam os mesmos problemas
+ruff==0.17.5

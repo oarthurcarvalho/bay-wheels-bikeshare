@@ -1,3 +1,13 @@
 [tool.pytest.ini_options]
 pythonpath = ["coletor"]
 testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+# Os módulos de coletor/ são importados pelo nome (import cobertura), como na Lambda
+src = ["coletor", "tests"]
+
+[tool.ruff.lint]
+# Erros reais (F), estilo PEP 8 (E, W), imports ordenados (I) e armadilhas comuns (B)
+select = ["E", "F", "W", "I", "B"]

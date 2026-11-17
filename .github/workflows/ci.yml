@@ -1,0 +1,56 @@
+# Roda em todo push na main e em todo PR: nada quebrado chega na Lambda.
+# Sem credencial da AWS: só testes, lint e checagem do Terraform (sem plan).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12" # a mesma da Lambda
+          cache: pip
+
+      - name: Instala dependências
+        run: pip install -r requirements.txt
+
+      - name: Ruff
+        run: ruff check coletor tests
+
+      - name: Pytest
+        run: pytest
+        env:
+          # Os clientes boto3 são criados ao importar os módulos; nenhuma chamada sai para a AWS
+          AWS_DEFAULT_REGION: us-east-1
+
+  terraform:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.17.2 # a mesma do seu PC
+
+      - name: Formatação
+        run: terraform fmt -check -recursive
+
+      # -backend=false: não toca no state do S3 nem precisa de credencial
+      - name: Init
+        run: terraform init -backend=false -input=false
+
+      - name: Validate
+        run: terraform validate

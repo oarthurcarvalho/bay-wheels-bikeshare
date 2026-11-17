@@ -108,7 +108,8 @@ def test_enviar_volume_faz_put_com_token(monkeypatch):
 
     monkeypatch.setattr(envio, "urlopen", urlopen_falso)
 
-    status = envio.enviar_volume("station_status/date=2026-11-01/status.jsonl.gz", b"dados", "https://host", "tok")
+    caminho = "station_status/date=2026-11-01/status.jsonl.gz"
+    status = envio.enviar_volume(caminho, b"dados", "https://host", "tok")
 
     pedido = pedidos[0]
     assert status == 204
@@ -210,7 +211,8 @@ def coletas_do_dia(dia, feeds=tuple(envio.ARQUIVOS_DO_DIA), horarios=("000036", 
             ts = int(agora.timestamp())
             estacoes = [{**e, "last_reported": ts + e["last_reported"]} for e in ESTACOES]
             resposta = {"last_updated": ts, "data": {"stations": estacoes}}
-            objetos[f"raw/{feed}/date={dia}/{hhmmss}.jsonl.gz"] = montar_linha(feed, resposta, agora)
+            chave = f"raw/{feed}/date={dia}/{hhmmss}.jsonl.gz"
+            objetos[chave] = montar_linha(feed, resposta, agora)
     return objetos
 
 
@@ -229,7 +231,9 @@ class SnsFalso:
 
     def publish(self, TopicArn, Subject, Message):
         assert Subject.isascii() and len(Subject) < 100
-        self.publicados.append({"topico": TopicArn, "assunto": Subject, "mensagem": json.loads(Message)})
+        self.publicados.append(
+            {"topico": TopicArn, "assunto": Subject, "mensagem": json.loads(Message)}
+        )
 
 
 @pytest.fixture
@@ -266,7 +270,11 @@ def lambda_falsa(monkeypatch, tmp_path):
 
 
 def tres_dias():
-    return {**coletas_do_dia("2026-10-31"), **coletas_do_dia("2026-11-01"), **coletas_do_dia("2026-11-02")}
+    return {
+        **coletas_do_dia("2026-10-31"),
+        **coletas_do_dia("2026-11-01"),
+        **coletas_do_dia("2026-11-02"),
+    }
 
 
 def test_lambda_envia_dias_pendentes_e_segunda_execucao_nao_envia_nada(lambda_falsa):
@@ -290,7 +298,9 @@ def test_lambda_dia_com_falha_nao_segura_os_outros_e_termina_com_erro(lambda_fal
     instalar, _ = lambda_falsa
     # Em 01/11 faltou o system_regions inteiro
     sem_regions = coletas_do_dia("2026-11-01", feeds=("station_status", "station_information"))
-    bucket = instalar({**coletas_do_dia("2026-10-31"), **sem_regions, **coletas_do_dia("2026-11-02")})
+    bucket = instalar(
+        {**coletas_do_dia("2026-10-31"), **sem_regions, **coletas_do_dia("2026-11-02")}
+    )
 
     with pytest.raises(RuntimeError, match="2026-11-01"):
         envio.lambda_handler({}, None)
@@ -386,7 +396,8 @@ def test_lambda_envia_viagens_limpa_tmp_e_nao_repete(lambda_falsa, tmp_path):
 def test_lambda_mes_quebrado_nao_segura_os_outros_e_limpa_tmp(lambda_falsa, tmp_path):
     instalar, enviados = lambda_falsa
     quebrado = {"202202": b"isto nao e um zip"}
-    bucket = instalar({**tres_dias(), **bucket_com_viagens(["202201", "202202", "202203"], quebrado)})
+    viagens = bucket_com_viagens(["202201", "202202", "202203"], quebrado)
+    bucket = instalar({**tres_dias(), **viagens})
 
     with pytest.raises(RuntimeError, match="202202"):
         envio.lambda_handler({}, None)

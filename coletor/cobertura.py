@@ -1,5 +1,6 @@
 import datetime
 import gzip
+import itertools
 import json
 import math
 import os
@@ -66,11 +67,11 @@ def calcular_cobertura(coletas, inicio, fim):
 
     # As bordas entram: se a coleta parou às 18h, o buraco até o fim do dia aparece aqui
     pontos = [inicio, *(coleta["horario"] for coleta in coletas), fim]
-    maior_intervalo = max(depois - antes for antes, depois in zip(pontos, pontos[1:]))
+    maior_intervalo = max(depois - antes for antes, depois in itertools.pairwise(pontos))
 
     total_bytes = sum(coleta["bytes"] for coleta in coletas)
     last_updated = [coleta["last_updated"] for coleta in coletas]
-    repetidos = sum(1 for antes, depois in zip(last_updated, last_updated[1:]) if antes == depois)
+    repetidos = sum(1 for antes, depois in itertools.pairwise(last_updated) if antes == depois)
 
     return {
         "inicio": inicio.isoformat(),
