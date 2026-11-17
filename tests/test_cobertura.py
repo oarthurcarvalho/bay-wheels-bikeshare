@@ -243,7 +243,9 @@ def test_relatorio_separa_virtuais_das_fisicas(monkeypatch):
         },
     }
     monkeypatch.setattr(cobertura, "cobertura_dia", lambda data, agora=None: {"cobertura": 1.0})
-    monkeypatch.setattr(cobertura, "listar_coletas", lambda data, feed="station_status": [{"chave": feed}])
+    monkeypatch.setattr(
+        cobertura, "listar_coletas", lambda data, feed="station_status": [{"chave": feed}]
+    )
     monkeypatch.setattr(cobertura, "ler_resposta", lambda chave: respostas[chave])
 
     relatorio = cobertura.relatorio_cobertura(date(2026, 11, 7))
